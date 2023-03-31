@@ -42,9 +42,22 @@ q2 = - q1 # charge d'un ion (adimensionnement)
 m1 = 1 # masse d'un électron (adimensionnement)
 m2 = 2000 # masse d'un ion (adimensionnement)
 
+dt = 1 # time step
+tEnd = 100 # time at which simulation ends
+dx = boxsize / N
+# important : la construction des matrices de gradient et du laplacien sont les mêmes pour x et y car dx = dy
+# attention : si on change la valeur de dy, alors changer la construction de Gmtx et Lmtx
+dy = boxsize / N
+dz = boxsize / N
+n0 = 1 # electron number density
+e = np.ones(N + 1)
+eps0 = 8.9e-12 # permittivité diélectrique du vide
+mu0 = 4e-7 * np.pi # perméabilité magnétique du vide
+kB = 1.38e-23 # constante de Boltzmann
+
 # initialisation
 
-def load_particle():
+def load_particle(T):
     """ set particles coordinates and velocities """
     posx, posy = [], []
     I, J = [], []
@@ -76,9 +89,15 @@ def load_particle():
         yb = y / boxsize - j
         # calcul de yh
         yh = boxsize - yb
-        # vitesse aléatoire initiale de la particule suivant une loi gaussienne
-        ux = np.random.normal(5, 10, size=None)
-        uy = np.random.normal(5, 10, size=None)
+        ## vitesse aléatoire initiale de la particule suivant une loi gaussienne
+        #ux = np.random.normal(5, 10, size=None)
+        #uy = np.random.normal(5, 10, size=None)
+        # vitesse initiale de la particule selon la valeur de la température initiale du plasma donnée en paramètre
+        ux = np.sqrt(kB * T / m1)
+        uy = ux
+        if k >= P//2:
+            ux = np.sqrt(kB * T / m2)
+            uy = ux
 
         # stockage dans les vecteurs
         posx.append(x)
@@ -125,21 +144,7 @@ def project_charge(I, J, posx, posy, XG, XD, YH, YB, UX, UY):
 
 ##########
 
-dt = 1 # time step
-tEnd = 100 # time at which simulation ends
-dx = boxsize / N
-# important : la construction des matrices de gradient et du laplacien sont les mêmes pour x et y car dx = dy
-# attention : si on change la valeur de dy, alors changer la construction de Gmtx et Lmtx
-dy = boxsize / N
-dz = boxsize / N
-n0 = 1 # electron number density
-e = np.ones(N + 1)
-eps0 = 8.9e-12 # permittivité diélectrique du vide
-mu0 = 4e-7 * np.pi # perméabilité magnétique du vide
-kB = 1.38e-23 # constante de Boltzmann
-
 # Construct matrix G to computer Gradient  (1st derivative)
-# Gmtx is an N x N matrix for calculating the gradient on the grid
 diags = np.array([-1,1])
 vals  = np.vstack((-e,e))
 Gmtx = sp.spdiags(vals, diags, N + 1, N + 1);
@@ -150,7 +155,6 @@ Gmtx /= (2*dx)
 Gmtx = sp.csr_matrix(Gmtx)
 
 # Construct matrix L to computer Laplacian (2nd derivative)
-
 Nx = Ny = N + 1
 Lmtx = np.zeros(shape=(Nx,Ny,Nx,Ny),dtype='d')
 for i in range(1,Nx-1):
@@ -159,7 +163,7 @@ for i in range(1,Nx-1):
         Lmtx[i,j,i,j] = -4/dx**2
 for i in range(0,Nx):
     Lmtx[0,i,0,i] = Lmtx[-1,i,-1,i] = Lmtx[i,0,i,0] = Lmtx[i,-1,i,-1] = 1
-    
+
 ##########
 
 def init_fields(rho):
@@ -385,7 +389,8 @@ def boucle():
     """ fonction boucle qui appelle les fonctions précedentes à chaque étape """
 
     # initialisation
-    I, J, posx, posy, XG, XD, YH, YB, UX, UY = load_particle()
+    T = 1000 # température initiale du plasma en Kelvin
+    I, J, posx, posy, XG, XD, YH, YB, UX, UY = load_particle(T)
     rho_tp, rho = project_charge(I, J, posx, posy, XG, XD, YH, YB, UX, UY)
     Vp, Etot_x, Etot_y, Btot_x, Btot_y, Btot_z = init_fields(rho)
     # calcul de la norme de la position et de la vitesse
@@ -430,6 +435,8 @@ def boucle():
     FE_v = np.array(F_e_an_v)
     FI_v = np.array(F_i_an_v)
     VVp = np.array(Vp)
+    TEMP = []
+    Densite = []
 
     for t in range (tEnd):
 
@@ -484,10 +491,12 @@ def boucle():
         FE_v = np.c_[FE_v, np.array(F_e_an_v)]
         FI_v = np.c_[FI_v, np.array(F_i_an_v)]
         VVp = np.c_[VVp, np.array(Vp)]
+        TEMP.append(Te)
+        Densite.append(len(particules_fixes))
 
-    return position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp
+    return position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite
 
-position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp = boucle()
+position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite = boucle()
 position_x = position_x.T
 position_y = position_y.T
 vitesse_x = vitesse_x.T
@@ -501,13 +510,14 @@ FI_v = FI_v.T
 VVp = VVp.T
 
 fig = plt.figure(figsize=(11,10))
-G = gridspec.GridSpec(4,4)
+G = gridspec.GridSpec(6,6)
 ax0 = plt.subplot(G[:2,:2])
 ax1 = plt.subplot(G[2,0])
 ax2 = plt.subplot(G[2,1])
 ax3 = plt.subplot(G[2,2])
 ax4 = plt.subplot(G[2,3])
-ax5 = plt.subplot(G[:2,2:])
+ax5 = plt.subplot(G[:2,2:4])
+ax6 = plt.subplot(G[:2,4:6])
 c0 = ax5.pcolor(VVp[0:11,:])
 fig.colorbar(c0, ax=ax5)
 
@@ -521,7 +531,8 @@ def animate(i):
     ax0.plot(position_x[i][P//2:], position_y[i][P//2:],'.', color='red')
     ax0.set_xlim(0, 500)
     ax0.set_ylim(0, 500)
-    ax0.set_title('Zone de simulation')
+    ax0.set_title('Zone de simulation, T(plasma)=')
+    ax0.legend()
 
     ax1.clear()
     ax1.hist(R[i][0:P//2], bins = nb_bins)
@@ -533,7 +544,7 @@ def animate(i):
     ax2.hist(V[i][0:P//2], bins = nb_bins)
     ax2.plot(largeur * FE_v[i][:])
     ax2.axis([0,500,0,500])
-    ax2.set_title('v electrons, T=',)
+    ax2.set_title('v electrons')
 
     ax3.clear()
     ax3.hist(R[i][P//2:], bins = nb_bins)
@@ -552,6 +563,11 @@ def animate(i):
     ax5.set_xlim(0, 11)
     ax5.set_ylim(0, 11)
     ax5.set_title('Potentiel électrique')
+    
+    ax6.clear()
+    ax6.plot(Densite)
+    ax6.set_xlim(0, tEnd)
+    ax6.set_title('Densité d électrons dans la sonde')
 
 anim = animation.FuncAnimation(fig, animate, interval=1, frames=tEnd)
 plt.tight_layout()
