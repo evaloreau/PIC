@@ -1,0 +1,16 @@
+Temperature_initiale_plasma = [1, 10, 100, 1000, 5000, 10000, 20000, 50000]
+Temperature_finale_plasma = []
+Potentiel_sonde_final = []
+
+Temperature_finale_plasma.append(TEMP[-1])
+Potentiel_sonde_final.append(Potentiel_sonde[-1])
+
+plt.plot(Temperature_initiale_plasma, Potentiel_sonde_final)
+plt.xlabel('Température initale du plasma (Kelvin)')
+plt.ylabel('Potentiel final de la sonde')
+plt.show()
+
+plt.plot(Temperature_finale_plasma, Potentiel_sonde_final)
+plt.xlabel('Température finale du plasma (Kelvin)')
+plt.ylabel('Potentiel final de la sonde')
+plt.show()
