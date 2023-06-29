@@ -37,23 +37,24 @@ P = 1000 # nombre de particules
 N = 10 # nombre de boîtes horizontal et vertical
 boxsize = 50 # longueur d'une boîte [0,boxsize]
 S = (N * boxsize) ** 2 # surface de la maille
-q1 = - 1 # charge d'un électron (adimensionnement)
-q2 = - q1 # charge d'un ion (adimensionnement)
-m1 = 1 # masse d'un électron (adimensionnement)
-m2 = 2000 # masse d'un ion (adimensionnement)
+n = P/2 / S # densité d'électrons
+q1 = - 1.6e-11 # charge d'un électron
+q2 = - q1 # charge d'un ion
+m1 = 9.11e-31 # masse d'un électron
+m2 = 2000 * m1 # masse d'un ion
 
 dt = 1 # time step
-tEnd = 1000 # time at which simulation ends
+tEnd = 100 # time at which simulation ends
 dx = boxsize / N
 # important : la construction des matrices de gradient et du laplacien sont les mêmes pour x et y car dx = dy
 # attention : si on change la valeur de dy, alors changer la construction de Gmtx et Lmtx
 dy = boxsize / N
 dz = boxsize / N
-n0 = 1 # electron number density
 e = np.ones(N + 1)
 eps0 = 8.9e-12 # permittivité diélectrique du vide
-mu0 = 4e-7 * np.pi # perméabilité magnétique du vide
 kB = 1.38e-23 # constante de Boltzmann
+c = 3.0e8 # célérité de la lumière dans le vide
+w = (n * q1**2 / eps0 / m1) ** (1/2)
 
 # initialisation
 
@@ -126,19 +127,19 @@ def project_charge(I, J, posx, posy, XG, XD, YH, YB, UX, UY):
         i = I[k]
         j = J[k]
         # calcul de la nouvelle densité de charge aux noeuds adjacents à la particule
-        rho[j][i] = q1 * XD[k] * YH[k] / boxsize / boxsize + rho[j][i]
-        rho[j][i + 1] = q1 * XG[k] * YH[k] / boxsize / boxsize + rho[j][i + 1]
-        rho[j + 1][i] = q1 * XD[k] * YB[k] / boxsize / boxsize + rho[j + 1][i]
-        rho[j + 1][i + 1] = q1 * XG[k] * YB[k] / boxsize / boxsize + rho[j + 1][i + 1]
+        rho[j][i] = q1 / q1 * XD[k] * YH[k] / boxsize / boxsize + rho[j][i]
+        rho[j][i + 1] = q1 / q1 * XG[k] * YH[k] / boxsize / boxsize + rho[j][i + 1]
+        rho[j + 1][i] = q1 / q1 * XD[k] * YB[k] / boxsize / boxsize + rho[j + 1][i]
+        rho[j + 1][i + 1] = q1 / q1 * XG[k] * YB[k] / boxsize / boxsize + rho[j + 1][i + 1]
 
     for k in range (P // 2, P):
         i = I[k]
         j = J[k]
         # calcul de la nouvelle densité de charge aux noeuds adjacents à la particule
-        rho[j][i] = q2 * XD[k] * YH[k] / boxsize / boxsize + rho[j][i]
-        rho[j][i + 1] = q2 * XG[k] * YH[k] / boxsize / boxsize + rho[j][i + 1]
-        rho[j + 1][i] = q2 * XD[k] * YB[k] / boxsize / boxsize + rho[j + 1][i]
-        rho[j + 1][i + 1] = q2 * XG[k] * YB[k] / boxsize / boxsize + rho[j + 1][i + 1]
+        rho[j][i] = q2 / q1 * XD[k] * YH[k] / boxsize / boxsize + rho[j][i]
+        rho[j][i + 1] = q2 / q1 * XG[k] * YH[k] / boxsize / boxsize + rho[j][i + 1]
+        rho[j + 1][i] = q2 / q1 * XD[k] * YB[k] / boxsize / boxsize + rho[j + 1][i]
+        rho[j + 1][i + 1] = q2 / q1 * XG[k] * YB[k] / boxsize / boxsize + rho[j + 1][i + 1]
 
     return rho_tp, rho
 
@@ -169,13 +170,13 @@ for i in range(0,Nx):
 def init_fields(rho):
     """ find E(j,i) from charge distribution and add external fields """
     # définition du champ électrique extérieur suivant l'axe x et y
-    Eext_x = 0.001
-    Eext_y = 0.001
+    Eext_x = 0
+    Eext_y = 0
     # calcul de la nouvelle valeur du champ électrique aux noeuds adjacents à la particule grâce à l'équation de Poisson
     Vp = np.linalg.tensorsolve(Lmtx,rho)
     #, permc_spec="MMD_AT_PLUS_A")
-    Etot_x = - Gmtx @ Vp + Eext_x
-    Etot_y = - Gmtx @ Vp + Eext_y
+    Etot_x = (- Gmtx @ Vp) * w / c + Eext_x
+    Etot_y = (- Gmtx @ Vp) * w / c + Eext_y
     # définition du champ magnétique initial
     Btot_x = np.zeros((N + 1, N + 1))
     Btot_y = np.zeros((N + 1, N + 1))
@@ -206,8 +207,8 @@ def push_particle(I, J, posx, posy, XG, XD, YH, YB, UX, UY, Epart_x, Epart_y, Bp
         i = I[k]
         j = J[k]
         # calcul de ux et uy
-        dux = q1 / m1 * (Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt
-        duy = q1 / m1 * (Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt
+        dux = q1 / q1 * m1 / m1 * (Epart_x[k] * q1 / m1 / c / w + UY[k] / c * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i] * q1 / m1 / w) * dt * c * w
+        duy = q1 / q1 * m1 / m1 * (Epart_y[k] * q1 / m1 / c / w - UX[k] / c * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i] * q1 / m1 / w) * dt * c * w
         UX[k] = UX[k] + dux
         UY[k] = UY[k] + duy
         # calcul de x et y
@@ -228,8 +229,8 @@ def push_particle(I, J, posx, posy, XG, XD, YH, YB, UX, UY, Epart_x, Epart_y, Bp
         i = I[k]
         j = J[k]
         # calcul de ux et uy
-        dux = q1 / m1 * (Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt
-        duy = q1 / m1 * (Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt
+        dux = q2 / q1 * m1 / m2 * (Epart_x[k] * q1 / m1 / c / w + UY[k] / c * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i] * q1 / m1 / w) * dt * c * w
+        duy = q2 / q1 * m1 / m2 * (Epart_y[k] * q1 / m1 / c / w - UX[k] / c * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i] * q1 / m1 / w) * dt * c * w
         UX[k] = UX[k] + dux
         UY[k] = UY[k] + duy
         # calcul de x et y
@@ -255,8 +256,8 @@ def project_current(I, J, posx, posy, XG, XD, YH, YB, rho_tp, rho):
     for i in range (1, N + 1):
         for j in range (N + 1):
             # équation de continuité
-            J_x[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt) - ((J_y[j][i] - J_y[j - 1][i]) / dy)) * dx + J_x[j][i - 1]
-            J_y[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt) - ((J_x[j][i] - J_x[j][i - 1]) / dx)) * dy + J_y[j - 1][i]
+            J_x[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt / n / w) - ((J_y[j][i] - J_y[j - 1][i]) / dy / q1 / c / n)) * dx * w / c + J_x[j][i - 1]
+            J_y[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt / n / w) - ((J_x[j][i] - J_x[j][i - 1]) / dx / q1 / c / n)) * dy * w / c + J_y[j - 1][i]
 
     # calcul de Jpart_x et Jpart_y
     Jpart_x = np.zeros(P)
@@ -276,13 +277,13 @@ def solve_maxw(I, J, posx, posy, XG, XD, YH, YB, Etot_x, Etot_y, Btot_x, Btot_y,
     for k in range (P):
         i = I[k]
         j = J[k]
-        # calcul du champ électrique - résolution de l'équation de Maxwell-Ampère
-        Etot_x[j][i] = - dx / dy * (Etot_y[j][i] - Etot_y[j - 1][i]) + dx * rho[j][i] / eps0 + Etot_x[j][i - 1]
-        Etot_y[j][i] = - dy / dx * (Etot_x[j][i] - Etot_x[j][i - 1]) + dy * rho[j][i] / eps0 + Etot_y[j - 1][i]
+        # calcul du champ électrique - résolution de l'équation de Maxwell-Gauss
+        Etot_x[j][i] = - dx / dy * (Etot_y[j][i] - Etot_y[j - 1][i]) + dx * w / c * rho[j][i] / n / eps0 * m1 * c * w / q1 + Etot_x[j][i - 1]
+        Etot_y[j][i] = - dy / dx * (Etot_x[j][i] - Etot_x[j][i - 1]) + dy * w / c * rho[j][i] / n / eps0 * m1 * c * w / q1 + Etot_y[j - 1][i]
         # calcul du champ magnétique - résolution de l'équation de Maxwell-Faraday
-        Btot_x[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dz * dt + Btot_x_tp[j][i]
-        Btot_y[j][i] = (Etot_x[j][i] - Etot_x[j][i - 1]) / dz * dt + Btot_y_tp[j][i]
-        Btot_z[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dx * dt - (Etot_x[j][i] - Etot_x[j][i - 1]) / dy * dt + Btot_z_tp[j][i]
+        Btot_x[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dz / w * c * dt * w / c + Btot_x_tp[j][i]
+        Btot_y[j][i] = (Etot_x[j][i] - Etot_x[j][i - 1]) / dz / w * c * dt * w / c + Btot_y_tp[j][i]
+        Btot_z[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dx / w * c * dt * w / c - (Etot_x[j][i] - Etot_x[j][i - 1]) / dy / w * c * dt * w / c + Btot_z_tp[j][i]
     return Etot_x, Etot_y, Btot_x, Btot_y, Btot_z
 
 def cond_bord(p, I, J, posx, posy, XG, XD, YB, YH, UX, UY):
@@ -376,28 +377,28 @@ def boite_metallique(I, J, UX, UY):
     # si la particule est dans la boite
     # la dimension de la boite est de 1*1
     # alors la particule rebondit sur la sonde et retourne dans le plasma mais elle cède quand même sa charge à la sonde
-    
+
     particules_fixes_electrons = []
     for k in range (P // 2):
         if I[k] == 5 and J[k] == 0:
             UX[k] = - UX[k]
             UY[k] = - UY[k]
             particules_fixes_electrons.append(k)
-            
-    particules_fixes_ions = []            
+
+    particules_fixes_ions = []
     for k in range (P // 2, P):
         if I[k] == 5 and J[k] == 0:
             UX[k] = - UX[k]
             UY[k] = - UY[k]
             particules_fixes_ions.append(k)
-            
+
     return particules_fixes_electrons, particules_fixes_ions
 
 def boucle():
     """ fonction boucle qui appelle les fonctions précedentes à chaque étape """
 
     # initialisation
-    T = 1 # température initiale du plasma en Kelvin
+    T = 100 # température initiale du plasma en Kelvin
     Potentiel_initial_sonde = 0 # potentiel initial de la sonde en Volt
     I, J, posx, posy, XG, XD, YH, YB, UX, UY = load_particle(T)
     rho_tp, rho = project_charge(I, J, posx, posy, XG, XD, YH, YB, UX, UY)
@@ -458,7 +459,7 @@ def boucle():
         Epart_x, Epart_y, Bpart_x, Bpart_y = project_fields(I, J, posx, posy, XG, XD, YH, YB, Etot_x, Etot_y, Btot_x, Btot_y)
         UX, UY, posx, posy, I, J, XG, XD, YH, YB = push_particle(I, J, posx, posy, XG, XD, YH, YB, UX, UY, Epart_x, Epart_y, Bpart_x, Bpart_y, Btot_z)
         # choisir ci-dessous si p = 1, 2 ou 3
-        I, J, posx, posy, XG, XD, YB, YH, UX, UY = cond_bord(1, I, J, posx, posy, XG, XD, YB, YH, UX, UY)
+        I, J, posx, posy, XG, XD, YB, YH, UX, UY = cond_bord(3, I, J, posx, posy, XG, XD, YB, YH, UX, UY)
         Jpart_x, Jpart_y = project_current(I, J, posx, posy, XG, XD, YH, YB, rho_tp, rho)
         Etot_x, Etot_y, Btot_x, Btot_y, Btot_z = solve_maxw(I, J, posx, posy, XG, XD, YH, YB, Etot_x, Etot_y, Btot_x, Btot_y, Btot_z, rho)
 
@@ -585,7 +586,7 @@ def animate(i):
     ax6.set_ylabel('Densité de particules dans la sonde', color='g')
     ax66.set_ylabel('Potentiel de la sonde', color='b')
     ax6.set_title('Caractéristiques de la sonde')
-    
+
     ax7.clear()
     ax7.plot(TEMP, Potentiel_sonde)
     ax7.set_title('Evolution du potentiel de la sonde en fonction de la température du plasma')
@@ -595,4 +596,4 @@ def animate(i):
 anim = animation.FuncAnimation(fig, animate, interval=1, frames=tEnd)
 plt.tight_layout()
 plt.show()
-anim.save('Résultat plasma T=1 K.gif')
+anim.save('Résultat plasma T=100 K.gif')
