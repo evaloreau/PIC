@@ -43,8 +43,9 @@ mu0 = const.mu_0 # perméabilité magnétique du vide
 kB = const.k # constante de Boltzmann
 q_e = const.e # charge d'un électron en valeur absolue
 m_e = const.m_e # masse d'un électron
+m_ion = m_e * 2000 # masse d'un ion
 
-P = 1000 # nombre de particules
+P = 5000 # nombre de particules
 N_real = 1e18 # nombre de particules dans le système de volume 1m^3
 n_ref = 1e18 # densité volumique de particules
 T_ref = 10 # eV
@@ -60,7 +61,7 @@ q2 = - q1 # charge d'un ion
 m1 = 1 # masse d'un électron
 m2 = 2000 * m1 # masse d'un ion
 dt = 1 # pas de temps
-tEnd = 10 # temps au bout duquel la simulation se termine
+tEnd = 50 # temps au bout duquel la simulation se termine
 dx = boxsize / N
 # important : la construction des matrices de gradient et du laplacien sont les mêmes pour x et y car dx = dy
 # attention : si on change la valeur de dy, alors changer la construction de Gmtx et Lmtx
@@ -108,15 +109,17 @@ def load_particle(T):
         yb = y / boxsize - j
         # calcul de yh
         yh = boxsize - yb
-        ## vitesse aléatoire initiale de la particule suivant une loi gaussienne
-        #ux = np.random.normal(5, 10, size=None)
-        #uy = np.random.normal(5, 10, size=None)
-        # vitesse initiale de la particule selon la valeur de la température initiale du plasma donnée en paramètre
-        ux = np.sqrt(kB * T / m1) * Delta_t / Delta_x
-        uy = ux
         if k >= P//2:
-            ux = np.sqrt(kB * T / m2) * Delta_t / Delta_x
-            uy = ux
+            # vitesse initiale moyenne de la particule selon la valeur de la température initiale du plasma donnée en paramètre
+            ux_mean = np.sqrt(kB * T / m_ion) * Delta_t / Delta_x
+            uy_mean = ux_mean
+            # vitesse aléatoire initiale de la particule suivant une loi gaussienne autour de la vitesse moyenne
+            ux = np.random.normal(ux_mean, 50, size=None)
+            uy = np.random.normal(uy_mean, 50, size=None)
+        ux_mean = np.sqrt(kB * T / m_e) * Delta_t / Delta_x
+        uy_mean = ux_mean
+        ux = np.random.normal(ux_mean, 50, size=None)
+        uy = np.random.normal(uy_mean, 50, size=None)
 
         # stockage dans les vecteurs
         posx.append(x)
@@ -194,17 +197,16 @@ def init_fields(rho):
     Eext_y = 0
     # calcul de la nouvelle valeur du champ électrique aux noeuds adjacents à la particule grâce à l'équation de Poisson
     Vp = np.linalg.tensorsolve(Lmtx,rho)
-    Vp = Vp * q_e / m_e * Delta_t**2 / Delta_x**2
     #, permc_spec="MMD_AT_PLUS_A")
-    Etot_x = ((- Gmtx @ Vp) + Eext_x) * q_e / 2 / m_e * Delta_t**2 / Delta_x
-    Etot_y = ((- Gmtx @ Vp) + Eext_y) * q_e / 2 / m_e * Delta_t**2 / Delta_y
+    Etot_x = (- Gmtx @ Vp) + Eext_x
+    Etot_y = (- Gmtx @ Vp) + Eext_y
     # définition du champ magnétique initial
-    Btot_x = np.zeros((N + 1, N + 1)) * q_e * Delta_t / 2 / m_e
-    Btot_y = np.zeros((N + 1, N + 1)) * q_e * Delta_t / 2 / m_e
+    Btot_x = np.zeros((N + 1, N + 1))
+    Btot_y = np.zeros((N + 1, N + 1))
     Btot_z = np.zeros((N + 1, N + 1))
     for i in range (N + 1):
         for j in range (N + 1):
-            Btot_z[i][j] = 0.1 * q_e * Delta_t / 2 / m_e
+            Btot_z[i][j] = 0
     return Vp, Etot_x, Etot_y, Btot_x, Btot_y, Btot_z
 
 # Calcul du champ électrique et magnétique pour chaque particule
@@ -232,14 +234,14 @@ def push_particle(I, J, posx, posy, XG, XD, YH, YB, UX, UY, Epart_x, Epart_y, Bp
         i = I[k]
         j = J[k]
         # calcul de ux et uy
-        dux = (q1 / m1 * (Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * Delta_t) * Delta_t / Delta_x
-        duy = (q1 / m1 * (Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * Delta_t) * Delta_t / Delta_y
+        dux = (q1 / m1 * (-2 * Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt)
+        duy = (q1 / m1 * (-2 * Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt)
         UX[k] = UX[k] + dux
         UY[k] = UY[k] + duy
         # calcul de x et y
-        dx = (UX[k] * Delta_t) / Delta_x
+        dx = UX[k] * dt
         posx[k] = posx[k] + dx
-        dy = (UY[k] * Delta_t) / Delta_y
+        dy = UY[k] * dt
         posy[k] = posy[k] + dy
         # i et j représentent la boîte dans laquelle se trouve la particule
         I[k] = math.floor(posx[k] / boxsize)
@@ -254,14 +256,14 @@ def push_particle(I, J, posx, posy, XG, XD, YH, YB, UX, UY, Epart_x, Epart_y, Bp
         i = I[k]
         j = J[k]
         # calcul de ux et uy
-        dux = (q2 / m2 * (Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * Delta_t) * Delta_t / Delta_y
-        duy = (q2 / m2 * (Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * Delta_t) * Delta_t / Delta_y
+        dux = (q2 / m2 * (-2 * Epart_x[k] + UY[k] * ((XD[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt)
+        duy = (q2 / m2 * (-2 * Epart_y[k] - UX[k] * ((YH[k] - 1/2) / boxsize) * Btot_z[j][i]) * dt)
         UX[k] = UX[k] + dux
         UY[k] = UY[k] + duy
         # calcul de x et y
-        dx = (UX[k] * Delta_t) / Delta_x
+        dx = UX[k] * dt
         posx[k] = posx[k] + dx
-        dy = (UY[k] * Delta_t) / Delta_y
+        dy = UY[k] * dt
         posy[k] = posy[k] + dy
         # i et j représentent la boîte dans laquelle se trouve la particule
         I[k] = math.floor(posx[k] / boxsize)
@@ -283,8 +285,8 @@ def project_current(I, J, posx, posy, XG, XD, YH, YB, rho_tp, rho):
     for i in range (1, N + 1):
         for j in range (N + 1):
             # équation de continuité
-            J_x[j][i] = - (((rho[j][i] - rho_tp[j][i]) / Delta_t) - ((J_y[j][i] - J_y[j - 1][i]) / Delta_y)) * Delta_x + J_x[j][i - 1]
-            J_y[j][i] = - (((rho[j][i] - rho_tp[j][i]) / Delta_t) - ((J_x[j][i] - J_x[j][i - 1]) / Delta_x)) * Delta_y + J_y[j - 1][i]
+            J_x[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt) - ((J_y[j][i] - J_y[j - 1][i]) / dy)) * dx + J_x[j][i - 1]
+            J_y[j][i] = - (((rho[j][i] - rho_tp[j][i]) / dt) - ((J_x[j][i] - J_x[j][i - 1]) / dx)) * dy + J_y[j - 1][i]
 
     # calcul de Jpart_x et Jpart_y
     Jpart_x = np.zeros(P)
@@ -307,12 +309,12 @@ def solve_maxw(I, J, posx, posy, XG, XD, YH, YB, Etot_x, Etot_y, Btot_x, Btot_y,
         i = I[k]
         j = J[k]
         # calcul du champ électrique - résolution de l'équation de Maxwell-Gauss
-        Etot_x[j][i] = - Delta_x / Delta_y * (Etot_y[j][i] - Etot_y[j - 1][i]) + Delta_x * rho[j][i] / eps0 + Etot_x[j][i - 1]
-        Etot_y[j][i] = - Delta_y / Delta_x * (Etot_x[j][i] - Etot_x[j][i - 1]) + Delta_y * rho[j][i] / eps0 + Etot_y[j - 1][i]
+        Etot_x[j][i] = - dx / dy * (Etot_y[j][i] - Etot_y[j - 1][i]) + dx * rho[j][i] + Etot_x[j][i - 1]
+        Etot_y[j][i] = - dy / dx * (Etot_x[j][i] - Etot_x[j][i - 1]) + dy * rho[j][i] + Etot_y[j - 1][i]
         # calcul du champ magnétique - résolution de l'équation de Maxwell-Faraday
-        Btot_x[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / Delta_z * Delta_t + Btot_x_tp[j][i]
-        Btot_y[j][i] = (Etot_x[j][i] - Etot_x[j][i - 1]) / Delta_z * Delta_t + Btot_y_tp[j][i]
-        Btot_z[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / Delta_x * Delta_t - (Etot_x[j][i] - Etot_x[j][i - 1]) / Delta_y * Delta_t + Btot_z_tp[j][i]
+        Btot_x[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dz * dt + Btot_x_tp[j][i]
+        Btot_y[j][i] = (Etot_x[j][i] - Etot_x[j][i - 1]) / dz * dt + Btot_y_tp[j][i]
+        Btot_z[j][i] = (Etot_y[j][i] - Etot_y[j - 1][i]) / dx * dt - (Etot_x[j][i] - Etot_x[j][i - 1]) / dy * dt + Btot_z_tp[j][i]
     return Etot_x, Etot_y, Btot_x, Btot_y, Btot_z
 
 # Définition des conditions aux bords
@@ -452,8 +454,8 @@ def boucle():
     v0i_t0 = np.mean(VV[P//2:])
 
     # température des électrons et des ions à l'instant initial
-    Te_t0 = m1 * v0e_t0 ** 2 / 2 / kB
-    Ti_t0 = m2 * v0i_t0 ** 2 / 2 / kB
+    Te_t0 = m1 * v0e_t0 ** 2 / 2
+    Ti_t0 = m2 * v0i_t0 ** 2 / 2
 
     # écart-type des électrons et des ions
     sigma_e = np.std(RR[0:P//2])
@@ -465,8 +467,11 @@ def boucle():
     # fonction de distribution des électrons et des ions à l'instant initial
     F_e_an = P//2 / (np.pi)**(1/2) / sigma_e * np.exp(-(R_an-250)**2 / 2 / sigma_e**2)
     F_i_an = P//2 / (np.pi)**(1/2) / sigma_i * np.exp(-(R_an-250)**2 / 2 / sigma_i**2)
-    F_e_an_v = P//2 / (np.pi * kB * Te_t0)**(1/2) * m1**(1/2) * np.exp(-m1 * (V_an-250)**2 / 2 / kB / Te_t0)
-    F_i_an_v = P//2 / (np.pi * kB * Ti_t0)**(1/2) * m2**(1/2) * np.exp(-m2 * (V_an-250)**2 / 2 / kB / Ti_t0)
+    F_e_an_v = P//2 / (np.pi * Te_t0)**(1/2) * m1**(1/2) * np.exp(-m1 * (V_an-250)**2 / 2 / Te_t0)
+    F_i_an_v = P//2 / (np.pi * Ti_t0)**(1/2) * m2**(1/2) * np.exp(-m2 * (V_an-250)**2 / 2 / Ti_t0)
+    
+    # calcul théorique du potentiel de l'électrode à l'instant initial
+    delta_V = kB * T / q_e * 1/2 * np.log(m_ion / 2 / np.pi / m_e)
 
     # définition des listes de stockage
     position_x = np.array(posx)
@@ -483,6 +488,7 @@ def boucle():
     TEMP = [T]
     Densite = []
     Potentiel_sonde = [Potentiel_initial_sonde]
+    Delta_V = [delta_V]
 
     for t in range (tEnd):
 
@@ -513,8 +519,8 @@ def boucle():
         v0i = np.mean(VV[P//2:])
 
         # température des électrons et des ions
-        Te = m1 * v0e ** 2 / 2 / kB
-        Ti = m2 * v0i ** 2 / 2 / kB
+        Te = m1 * v0e ** 2 / 2
+        Ti = m2 * v0i ** 2 / 2
 
         # écart-type des électrons et des ions
         sigma_e = np.std(RR[0:P//2])
@@ -523,8 +529,11 @@ def boucle():
         # fonction de distribution des électrons et des ions
         F_e_an = P//2 / sigma_e * np.exp(-(R_an-250)**2 / 2 / sigma_e**2) / (np.pi)**(1/2)
         F_i_an = P//2 / sigma_i * np.exp(-(R_an-250)**2 / 2 / sigma_i**2) / (np.pi)**(1/2)
-        F_e_an_v = P//2 / (np.pi * kB * Te)**(1/2) * m1**(1/2) * np.exp(-m1 * (V_an-250)**2 / 2 / kB / Te)
-        F_i_an_v = P//2 / (np.pi * kB * Ti)**(1/2) * m2**(1/2) * np.exp(-m2 * (V_an-250)**2 / 2 / kB / Ti)
+        F_e_an_v = P//2 / (np.pi * Te)**(1/2) * m1**(1/2) * np.exp(-m1 * (V_an-250)**2 / 2 / Te)
+        F_i_an_v = P//2 / (np.pi * Ti)**(1/2) * m2**(1/2) * np.exp(-m2 * (V_an-250)**2 / 2 / Ti)
+        
+        # calcul théorique du potentiel de l'électrode
+        delta_V = kB * Te / q_e * 1/2 * np.log(m_ion / 2 / np.pi / m_e)
 
         # stockage des variables
         position_x = np.c_[position_x, np.array(posx)]
@@ -541,12 +550,13 @@ def boucle():
         TEMP.append(Te)
         Densite.append(len(particules_fixes_electrons) + len(particules_fixes_ions))
         Potentiel_sonde.append(Potentiel_initial_sonde + Vp[5][0])
+        Delta_V.append(delta_V)
 
-    return position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite, Potentiel_sonde
+    return position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite, Potentiel_sonde, Delta_V
 
 # Définition des variables pour la figure
 
-position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite, Potentiel_sonde = boucle()
+position_x, position_y, vitesse_x, vitesse_y, R, V, FE, FI, FE_v, FI_v, VVp, TEMP, Densite, Potentiel_sonde, Delta_V = boucle()
 position_x = position_x.T
 position_y = position_y.T
 vitesse_x = vitesse_x.T
@@ -590,25 +600,25 @@ def animate(i):
 
     ax1.clear()
     ax1.hist(R[i][0:P//2], bins = nb_bins)
-    ax1.plot(largeur * FE[i][:])
+    #ax1.plot(largeur * FE[i][:])
     ax1.axis([0,500,0,500])
     ax1.set_title('r electrons')
 
     ax2.clear()
     ax2.hist(V[i][0:P//2], bins = nb_bins)
-    ax2.plot(largeur * FE_v[i][:])
+    #ax2.plot(largeur * FE_v[i][:])
     ax2.axis([0,500,0,500])
     ax2.set_title('v electrons')
 
     ax3.clear()
     ax3.hist(R[i][P//2:], bins = nb_bins)
-    ax3.plot(largeur * FI[i][:])
+    #ax3.plot(largeur * FI[i][:])
     ax3.axis([0,500,0,500])
     ax3.set_title('r ions')
 
     ax4.clear()
     ax4.hist(V[i][P//2:], bins = nb_bins)
-    ax4.plot(largeur * FI_v[i][:])
+    #ax4.plot(largeur * FI_v[i][:])
     ax4.axis([0,500,0,500])
     ax4.set_title('v ions')
 
@@ -623,15 +633,17 @@ def animate(i):
     ax6.plot(Densite, 'g-')
     ax66.plot(Potentiel_sonde, 'b-')
     ax6.set_xlim(0, tEnd)
+    ax6.set_xlabel('Temps de simulation')
     ax6.set_ylabel('Densité de particules dans la sonde', color='g')
     ax66.set_ylabel('Potentiel de la sonde', color='b')
     ax6.set_title('Caractéristiques de la sonde')
 
     ax7.clear()
-    ax7.plot(TEMP, Potentiel_sonde)
+    ax7.plot(TEMP, Potentiel_sonde, '*', color='red', label='Potentiel de la sonde')
+    ax7.plot(TEMP, Delta_V, '*', color='purple', label='Potentiel théorique de la sonde')
     ax7.set_title('Evolution du potentiel de la sonde en fonction de la température du plasma')
     ax7.set_xlabel('Température du plasma (Kelvin)')
-    ax7.set_ylabel('Potentiel de la sonde')
+    ax7.legend(loc='upper right')
 
 anim = animation.FuncAnimation(fig, animate, interval=1, frames=tEnd)
 plt.tight_layout()
